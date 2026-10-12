@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #14110e;
+  --color-asphalt: #231f1b;
+  --color-paper: #f3ead7;
+  --color-muted: #a89880;
+  --color-maize: #e8a317;
+  --color-flag: #1b7a45;
+  --color-clay: #c4452d;
+  --color-soil: #5c382c;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --radius: 0.85rem;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: var(--color-ink);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    touch-action: none;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid var(--color-maize);
+    outline-offset: 2px;
+  }
+}
+
+@media (min-width: 840px) and (pointer: fine) {
+  .touch-controls {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ring,
+  .wanted-stars {
+    animation: none;
+  }
+}
+
+@keyframes wanted-flash {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.wanted-stars {
+  animation: wanted-flash 0.5s steps(2, end) infinite;
+}
