@@ -1,4 +1,9 @@
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { Game, Kind } from "@/game/sim";
 import { vehiclePos } from "@/game/sim";
 import {
@@ -25,6 +30,47 @@ const ASPHALT = 0x2a2622;
 const SOIL = 0x6b5344;
 const GRASS = 0x3d5c45;
 const SKY = 0xe4d2b4;
+const ZENITH = 0x6f8fa8;
+const SUN_COL = 0xffb25c;
+
+// Tune the look here. Bloom only catches values above `bloomThreshold`, so lit
+// paper surfaces stay clean while lights (x4 HDR) glow.
+const FX = {
+  exposure: 1.0,
+  bloomStrength: 0.55,
+  bloomRadius: 0.5,
+  bloomThreshold: 1.5,
+  vignette: 0.45,
+  fovBase: 68,
+  fovKick: 14,
+};
+
+const GRADE_VERT = `varying vec2 vUv;
+void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const GRADE_FRAG = `uniform sampler2D tDiffuse;
+uniform float uTime; uniform float uHeat; uniform float uVig;
+varying vec2 vUv;
+void main(){
+  vec4 c = texture2D(tDiffuse, vUv);
+  float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+  c.rgb *= mix(vec3(0.90, 1.0, 1.10), vec3(1.08, 1.0, 0.90), smoothstep(0.1, 1.2, l));
+  vec2 d = vUv - 0.5; float r = dot(d, d);
+  c.rgb *= 1.0 - smoothstep(0.12, 0.62, r) * uVig;
+  vec3 heat = mix(vec3(1.0, 0.12, 0.08), vec3(0.1, 0.25, 1.0), step(0.0, sin(uTime * 9.0)));
+  c.rgb += heat * smoothstep(0.1, 0.6, r) * uHeat * (0.35 + 0.25 * sin(uTime * 18.0));
+  gl_FragColor = c;
+}`;
+const SKY_VERT = `varying vec3 vDir;
+void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+const SKY_FRAG = `uniform vec3 uTop; uniform vec3 uHorizon; uniform vec3 uSunDir; uniform vec3 uSunCol;
+varying vec3 vDir;
+void main(){
+  float h = clamp(vDir.y, 0.0, 1.0);
+  vec3 col = mix(uHorizon, uTop, pow(h, 0.55));
+  float s = max(dot(normalize(vDir), uSunDir), 0.0);
+  col += uSunCol * (pow(s, 8.0) * 0.35 + pow(s, 120.0) * 1.2);
+  gl_FragColor = vec4(col, 1.0);
+}`;
 
 function wx(x: number) {
   return x * S;
@@ -101,19 +147,54 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setClearColor(SKY, 1);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = FX.exposure;
+  const lowEnd =
+    typeof navigator !== "undefined" &&
+    ((navigator.hardwareConcurrency ?? 8) <= 4 || Math.min(window.innerWidth, window.innerHeight) < 420);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(SKY);
   scene.fog = new THREE.Fog(SKY, 70, 380);
+  const sunDir = new THREE.Vector3(-60, 34, -35).normalize();
+  const skyMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTop: { value: new THREE.Color(ZENITH) },
+      uHorizon: { value: new THREE.Color(SKY) },
+      uSunDir: { value: sunDir },
+      uSunCol: { value: new THREE.Color(SUN_COL) },
+    },
+    vertexShader: SKY_VERT,
+    fragmentShader: SKY_FRAG,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const skyGeo = new THREE.SphereGeometry(500, 24, 12);
+  const skyDome = new THREE.Mesh(skyGeo, skyMat);
+  skyDome.renderOrder = -1;
+  skyDome.frustumCulled = false;
+  scene.add(skyDome);
 
-  const camera = new THREE.PerspectiveCamera(68, 1, 0.2, 800);
+  const camera = new THREE.PerspectiveCamera(FX.fovBase, 1, 0.2, 800);
   camera.position.set(wx(3200), 40, wz(3600));
 
-  const hemi = new THREE.HemisphereLight(0xfff4e0, SOIL, 0.85);
+  const hemi = new THREE.HemisphereLight(0xcfd9e6, SOIL, 0.55);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffe0b0, 1.35);
-  sun.position.set(80, 120, 40);
-  scene.add(sun);
+  const sun = new THREE.DirectionalLight(0xffc489, 1.9);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(lowEnd ? 1024 : 2048, lowEnd ? 1024 : 2048);
+  const sc = sun.shadow.camera;
+  sc.left = -55;
+  sc.right = 55;
+  sc.top = 55;
+  sc.bottom = -55;
+  sc.near = 1;
+  sc.far = 220;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.05;
+  scene.add(sun, sun.target);
 
   const geos: THREE.BufferGeometry[] = [];
   const mats: THREE.Material[] = [];
@@ -130,6 +211,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
     track(new THREE.PlaneGeometry(wx(WORLD_W) + 80, wz(WORLD_H) + 80)),
     trackM(new THREE.MeshLambertMaterial({ color: SOIL })),
   );
+  ground.receiveShadow = true;
   ground.rotation.x = -Math.PI / 2;
   ground.position.set(wx(WORLD_W / 2), 0, wz(WORLD_H / 2));
   scene.add(ground);
@@ -145,6 +227,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   const lineMat = trackM(new THREE.MeshBasicMaterial({ color: MAIZE }));
   ROADS.forEach((road, i) => {
     const mesh = new THREE.Mesh(track(new THREE.BoxGeometry(wx(road.w), 0.06, wz(road.h))), roadMat);
+    mesh.receiveShadow = true;
     mesh.position.set(wx(road.x + road.w / 2), 0.06 + i * 0.001, wz(road.y + road.h / 2));
     scene.add(mesh);
     const vertical = road.axis === "v";
@@ -165,6 +248,8 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   );
   const bld = new THREE.InstancedMesh(track(unitBox()), bldMat, Math.max(1, BUILDINGS.length));
   bld.frustumCulled = false;
+  bld.castShadow = true;
+  bld.receiveShadow = true;
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
   const district = [0xd9cbb6, 0xc4553a, 0x8d7a68, 0xe8a317, 0xf3ead7, 0x4a453e];
@@ -189,6 +274,8 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   const cones = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 1, 6)), treeMat, Math.max(1, TREES.length));
   const acacias = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 1, 6)), acaciaMat, Math.max(1, TREES.length));
   const trunks = new THREE.InstancedMesh(track(unitBox()), trunkMat, Math.max(1, TREES.length));
+  cones.castShadow = true;
+  acacias.castShadow = true;
   cones.frustumCulled = false;
   acacias.frustumCulled = false;
   trunks.frustumCulled = false;
@@ -248,10 +335,17 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   };
   const traffic: { kind: Kind; mesh: THREE.InstancedMesh; ids: number[] }[] = [];
   let trafficReady = false;
+  let tails: THREE.InstancedMesh | null = null;
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  tailMat.color.setHex(0xff2a1a).multiplyScalar(4);
+  mats.push(tailMat);
 
   function ensureTraffic(g: Game) {
     if (trafficReady) return;
     trafficReady = true;
+    tails = new THREE.InstancedMesh(track(unitBox()), tailMat, Math.max(2, g.vehicles.length * 2));
+    tails.frustumCulled = false;
+    scene.add(tails);
     const ids: Record<Kind, number[]> = { matatu: [], car: [], boda: [], truck: [] };
     g.vehicles.forEach((v, i) => ids[v.kind].push(i));
     const stripe = matatuTexture();
@@ -263,6 +357,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
           : trackM(new THREE.MeshLambertMaterial({ color: 0xffffff }));
       const mesh = new THREE.InstancedMesh(track(unitBox()), mat, Math.max(1, list.length));
       mesh.frustumCulled = false;
+      mesh.castShadow = true;
       if (list.length === 0) mesh.count = 0;
       list.forEach((id, n) => {
         const color = CAR_COLORS[(id * 3) % CAR_COLORS.length] ?? PAPER;
@@ -287,6 +382,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
     );
     bar.position.set(0, 2.05, -0.4);
     group.add(body, bar);
+    body.castShadow = true;
     group.visible = false;
     scene.add(group);
     return { group, bar };
@@ -347,11 +443,14 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   bike.add(deck, tank, fork, backWheel, riderRig);
   bike.rotation.order = "YXZ";
   bike.scale.setScalar(1.45);
+  bike.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+  });
   scene.add(bike);
 
   const blob = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 14)),
-    trackM(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false })),
+    trackM(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18, depthWrite: false })),
   );
   blob.rotation.x = -Math.PI / 2;
   blob.position.y = 0.03;
@@ -363,6 +462,33 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   );
   beacon.visible = false;
   scene.add(beacon);
+
+  const target0 = new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    samples: lowEnd ? 0 : 4,
+  });
+  const composer = new EffectComposer(renderer, target0);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(
+    new THREE.Vector2(256, 256),
+    FX.bloomStrength,
+    FX.bloomRadius,
+    FX.bloomThreshold,
+  );
+  composer.addPass(bloom);
+  const grade = new ShaderPass({
+    uniforms: {
+      tDiffuse: { value: null },
+      uTime: { value: 0 },
+      uHeat: { value: 0 },
+      uVig: { value: FX.vignette },
+    },
+    vertexShader: GRADE_VERT,
+    fragmentShader: GRADE_FRAG,
+  });
+  composer.addPass(grade);
+  composer.addPass(new OutputPass());
+  let heat = 0;
 
   const desired = new THREE.Vector3();
   const look = new THREE.Vector3();
@@ -388,6 +514,8 @@ export function createView(canvas: HTMLCanvasElement): View3d {
     resize(width, height, dpr) {
       renderer.setPixelRatio(Math.min(1.5, dpr));
       renderer.setSize(Math.max(1, width), Math.max(1, height), false);
+      composer.setPixelRatio(Math.min(1.5, dpr));
+      composer.setSize(Math.max(1, width), Math.max(1, height));
       camera.aspect = width / Math.max(1, height);
       camera.updateProjectionMatrix();
     },
@@ -427,10 +555,25 @@ export function createView(canvas: HTMLCanvasElement): View3d {
           const v = g.vehicles[id];
           if (!v) return;
           const p = vehiclePos(v);
-          placeVehicle(bucket.mesh, n, wx(p.x), wz(p.y), laneYaw(p.lane.axis, p.lane.dir), size);
+          const yaw = laneYaw(p.lane.axis, p.lane.dir);
+          placeVehicle(bucket.mesh, n, wx(p.x), wz(p.y), yaw, size);
+          if (tails) {
+            const sn = Math.sin(yaw);
+            const cs = Math.cos(yaw);
+            for (let side = 0; side < 2; side++) {
+              const lx = (side === 0 ? -1 : 1) * size[0] * 0.32;
+              const lz = size[2] / 2 + 0.03;
+              dummy.position.set(wx(p.x) + lx * cs + lz * sn, size[1] * 0.45, wz(p.y) - lx * sn + lz * cs);
+              dummy.rotation.set(0, yaw, 0);
+              dummy.scale.set(0.34, 0.22, 0.12);
+              dummy.updateMatrix();
+              tails.setMatrixAt(id * 2 + side, dummy.matrix);
+            }
+          }
         });
         bucket.mesh.instanceMatrix.needsUpdate = true;
       }
+      if (tails) tails.instanceMatrix.needsUpdate = true;
 
       const flash = Math.sin(g.time * 14) > 0 ? CLAY : MAIZE;
       cops.forEach((cop, i) => {
@@ -441,7 +584,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
         cop.group.rotation.order = "YXZ";
         cop.group.rotation.y = src.yaw;
         cop.group.rotation.z = Math.sin(g.time * 3 + i) * 0.04;
-        (cop.bar.material as THREE.MeshBasicMaterial).color.setHex(flash);
+        (cop.bar.material as THREE.MeshBasicMaterial).color.setHex(flash).multiplyScalar(4);
       });
 
       if (g.heli && g.phase === "play") {
@@ -450,7 +593,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
         heli.rotation.y = g.heli.yaw;
         rotor.rotation.y += dt * 24;
         tailRotor.rotation.x += dt * 32;
-        (heliBar.material as THREE.MeshBasicMaterial).color.setHex(flash);
+        (heliBar.material as THREE.MeshBasicMaterial).color.setHex(flash).multiplyScalar(4);
       } else {
         heli.visible = false;
       }
@@ -458,7 +601,9 @@ export function createView(canvas: HTMLCanvasElement): View3d {
       if (target && g.phase === "play" && Math.hypot(target.x - g.x, target.y - g.y) > 30) {
         beacon.visible = true;
         beacon.position.set(wx(target.x), 8, wz(target.y));
-        (beacon.material as THREE.MeshBasicMaterial).color.setHex(g.stars > 0 ? CLAY : g.carried ? FLAG : MAIZE);
+        (beacon.material as THREE.MeshBasicMaterial).color
+          .setHex(g.stars > 0 ? CLAY : g.carried ? FLAG : MAIZE)
+          .multiplyScalar(2.5);
       } else {
         beacon.visible = false;
       }
@@ -495,7 +640,23 @@ export function createView(canvas: HTMLCanvasElement): View3d {
       gaze.lerp(look, k);
       camera.lookAt(gaze);
       snapped = false;
-      renderer.render(scene, camera);
+
+      const playing = g.phase === "play";
+      const wantFov =
+        reduce || !playing ? FX.fovBase : FX.fovBase + speed01 * FX.fovKick + Math.min(6, g.shake * 0.4);
+      camera.fov += (wantFov - camera.fov) * 0.1;
+      camera.updateProjectionMatrix();
+
+      skyDome.position.copy(camera.position);
+      sun.target.position.set(Math.round(bike.position.x / 2) * 2, 0, Math.round(bike.position.z / 2) * 2);
+      sun.position.copy(sun.target.position).addScaledVector(sunDir, 120);
+
+      const wantHeat = playing && g.stars >= 2 && !reduce ? Math.min(1, (g.stars - 1) / 3) : 0;
+      heat += (wantHeat - heat) * 0.08;
+      grade.uniforms.uHeat.value = heat;
+      grade.uniforms.uTime.value = g.time;
+      bloom.strength = FX.bloomStrength + speed01 * 0.15;
+      composer.render(dt);
     },
     paintMap(ctx, g, w, h) {
       ctx.clearRect(0, 0, w, h);
@@ -524,6 +685,10 @@ export function createView(canvas: HTMLCanvasElement): View3d {
       }
     },
     dispose() {
+      composer.dispose();
+      target0.dispose();
+      skyGeo.dispose();
+      skyMat.dispose();
       renderer.dispose();
       for (const g of geos) g.dispose();
       for (const m of mats) m.dispose();
