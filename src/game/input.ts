@@ -4,6 +4,8 @@ export type Actions = {
   horn: boolean;
   hornPressed: boolean;
   pausePressed: boolean;
+  handbrake: boolean;
+  boost: boolean;
 };
 
 const GAME_KEYS = new Set([
@@ -18,6 +20,10 @@ const GAME_KEYS = new Set([
   "Space",
   "KeyP",
   "Escape",
+  "ShiftLeft",
+  "ShiftRight",
+  "KeyQ",
+  "ControlLeft",
 ]);
 
 function clamp(v: number, a: number, b: number) {
@@ -36,6 +42,8 @@ export type Input = {
   setKeys: (codes: string[]) => void;
   setSteer: (v: number) => void;
   setHornHeld: (held: boolean) => void;
+  setHandbrake: (held: boolean) => void;
+  setBoost: (held: boolean) => void;
   bindStick: (root: HTMLElement, nub: HTMLElement) => () => void;
   bindHorn: (el: HTMLElement) => () => void;
   destroy: () => void;
@@ -48,6 +56,8 @@ export function createInput(): Input {
   let prevHorn = false;
   let prevPause = false;
   let hornHeld = false;
+  let handbrakeHeld = false;
+  let boostHeld = false;
   const stick = { x: 0, y: 0, active: false };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -103,8 +113,10 @@ export function createInput(): Input {
     const pausePressed = pauseNow && !prevPause;
     prevHorn = horn;
     prevPause = pauseNow;
+    const handbrake = handbrakeHeld || h.has("KeyQ") || h.has("ControlLeft");
+    const boost = boostHeld || h.has("ShiftLeft") || h.has("ShiftRight");
 
-    return { throttle, steer, horn, hornPressed, pausePressed };
+    return { throttle, steer, horn, hornPressed, pausePressed, handbrake, boost };
   }
 
   function padsHorn(pads: Array<Gamepad | null>) {
@@ -204,6 +216,12 @@ export function createInput(): Input {
     },
     setHornHeld(held: boolean) {
       hornHeld = held;
+    },
+    setHandbrake(held: boolean) {
+      handbrakeHeld = held;
+    },
+    setBoost(held: boolean) {
+      boostHeld = held;
     },
     bindStick,
     bindHorn,

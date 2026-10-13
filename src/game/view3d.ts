@@ -448,6 +448,25 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   });
   scene.add(bike);
 
+  const head = new THREE.SpotLight(0xfff1d0, 0, 28, 0.55, 0.4, 1.2);
+  head.position.set(0, 1.1, 0.4);
+  head.target.position.set(0, 0.6, 4);
+  bike.add(head, head.target);
+
+  const rainCount = 420;
+  const rainGeo = track(new THREE.BufferGeometry());
+  const rainPos = new Float32Array(rainCount * 3);
+  for (let i = 0; i < rainCount; i++) {
+    rainPos[i * 3] = (Math.random() - 0.5) * 40;
+    rainPos[i * 3 + 1] = Math.random() * 18;
+    rainPos[i * 3 + 2] = (Math.random() - 0.5) * 40;
+  }
+  rainGeo.setAttribute("position", new THREE.BufferAttribute(rainPos, 3));
+  const rainMat = trackM(new THREE.PointsMaterial({ color: 0xc8d4e0, size: 0.08, transparent: true, opacity: 0.55, depthWrite: false }));
+  const rain = new THREE.Points(rainGeo, rainMat);
+  rain.visible = false;
+  scene.add(rain);
+
   const blob = new THREE.Mesh(
     track(new THREE.CircleGeometry(1.1, 14)),
     trackM(new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18, depthWrite: false })),
@@ -489,6 +508,12 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   composer.addPass(grade);
   composer.addPass(new OutputPass());
   let heat = 0;
+  const dayTop = new THREE.Color(ZENITH);
+  const dayHor = new THREE.Color(SKY);
+  const nightTop = new THREE.Color(0x1a2433);
+  const nightHor = new THREE.Color(0x2a2018);
+  const duskTop = new THREE.Color(0x6a4a3a);
+  const duskHor = new THREE.Color(0xe8a070);
 
   const desired = new THREE.Vector3();
   const look = new THREE.Vector3();
@@ -650,6 +675,29 @@ export function createView(canvas: HTMLCanvasElement): View3d {
       skyDome.position.copy(camera.position);
       sun.target.position.set(Math.round(bike.position.x / 2) * 2, 0, Math.round(bike.position.z / 2) * 2);
       sun.position.copy(sun.target.position).addScaledVector(sunDir, 120);
+
+      const day = g.day ?? 0.72;
+      const night = day < 0.22 || day > 0.78;
+      const dusk = (day > 0.68 && day < 0.82) || (day > 0.18 && day < 0.28);
+      const sunAmt = night ? 0.12 : dusk ? 0.55 : 1;
+      sun.intensity = 1.9 * sunAmt * (1 - (g.rain ?? 0) * 0.45);
+      hemi.intensity = 0.55 * (night ? 0.35 : 1);
+      const top = night ? nightTop : dusk ? duskTop : dayTop;
+      const hor = night ? nightHor : dusk ? duskHor : dayHor;
+      (skyMat.uniforms.uTop.value as THREE.Color).lerp(top, 0.08);
+      (skyMat.uniforms.uHorizon.value as THREE.Color).lerp(hor, 0.08);
+      head.intensity = night ? 2.4 : dusk ? 0.6 : 0;
+      const wet = (g.rain ?? 0) > 0.2;
+      rain.visible = wet && !reduce;
+      if (wet) {
+        rain.position.copy(camera.position);
+        const arr = rainGeo.attributes.position.array as Float32Array;
+        for (let i = 1; i < arr.length; i += 3) {
+          arr[i] -= 18 * dt;
+          if (arr[i] < 0) arr[i] = 18;
+        }
+        rainGeo.attributes.position.needsUpdate = true;
+      }
 
       const wantHeat = playing && g.stars >= 2 && !reduce ? Math.min(1, (g.stars - 1) / 3) : 0;
       heat += (wantHeat - heat) * 0.08;

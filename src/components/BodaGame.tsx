@@ -57,6 +57,13 @@ const EMPTY_HUD: Hud = {
   seen: false,
   ending: "",
   shook: 0,
+  style: 0,
+  boost: 0,
+  drifting: false,
+  toasts: [],
+  day: 0.72,
+  rain: 0,
+  radio: "Boda FM",
 };
 
 export function BodaGame() {
@@ -350,7 +357,10 @@ export function BodaGame() {
           <div className="mx-auto max-w-sm rounded-full bg-ink/88 px-4 py-2 text-center">
             <p className="font-display text-sm leading-tight font-extrabold">{hud.objective}</p>
             <p className="text-xs text-muted">{hud.detail}</p>
-            <p className="text-[10px] tracking-wide text-paper/50">{trackName || "Boda FM"}</p>
+            <p className="text-[10px] tracking-wide text-paper/50">
+              {hud.rain > 0.3 ? "Rain · " : ""}
+              {hud.day < 0.22 || hud.day > 0.78 ? "Night" : hud.day > 0.68 ? "Dusk" : "Day"} · {hud.radio}
+            </p>
           </div>
         </div>
       )}
@@ -361,7 +371,7 @@ export function BodaGame() {
             <p className="text-xs font-semibold tracking-[0.18em] text-maize">NAIROBI · AFTER FIVE</p>
             <h1 className="mt-1 font-display text-5xl leading-none font-extrabold">Boda Rush</h1>
             <p className="mt-3 text-sm text-paper/90">
-              The whole city, shortened so you can ride it. CBD out to Karen, Eastlands and JKIA.
+              The whole city, shortened so you can ride it. Day turns to night. Rain kills the grip.
               Clip a matatu and the stars come on. Cut through estates and parks.
             </p>
             <ul className="mt-4 space-y-1 text-sm text-muted">

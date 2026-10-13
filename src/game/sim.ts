@@ -121,6 +121,13 @@ export type Game = {
   shook: number;
   huntX: number;
   huntY: number;
+  style: number;
+  styleLife: number;
+  driftTime: number;
+  boostJuice: number;
+  nearCd: number;
+  day: number;
+  rain: number;
 };
 
 const MAX_SPEED = 270;
@@ -165,6 +172,19 @@ function baseSpeed(kind: Kind, r: number) {
 }
 
 const ROUTES = [23, 33, 45, 46, 58, 111, 125];
+
+const RADIO = [
+  "Sasa, niko stage. Unaenda wapi?",
+  "Twende. Fare ni mia moja.",
+  "Hii traffic ni noma, chukua shortcut.",
+  "Police iko mbele, epuka.",
+  "Nganya ya 33 inakuja.",
+  "Panda nduthi, twende town.",
+  "Rada ni gani hapo?",
+  "Hii rain inakata grip.",
+  "Makanga anaita Tom Mboya.",
+  "Usipoteze helmet.",
+];
 
 export function vehicleRadius(kind: Kind) {
   if (kind === "matatu") return 22;
@@ -219,6 +239,13 @@ export function createGame(best = 0, bestStreak = 0): Game {
     shook: 0,
     huntX: SPAWN.x,
     huntY: SPAWN.y,
+    style: 0,
+    styleLife: 0,
+    driftTime: 0,
+    boostJuice: 2.2,
+    nearCd: 0,
+    day: 0.72,
+    rain: 0,
   };
   seedTraffic(g, 1);
   openPickups(g, 4);
@@ -304,6 +331,13 @@ export function startShift(g: Game) {
   g.shook = 0;
   g.huntX = SPAWN.x;
   g.huntY = SPAWN.y;
+  g.style = 0;
+  g.styleLife = 0;
+  g.driftTime = 0;
+  g.boostJuice = 2.2;
+  g.nearCd = 0;
+  g.day = 0.72;
+  g.rain = 0;
   seedTraffic(g, Math.floor(g.time * 10) + 3);
   openPickups(g, 4);
 }
@@ -344,7 +378,7 @@ function addHeat(g: Game, amount: number) {
   g.stars = Math.min(5, g.stars + amount);
   g.huntX = g.x;
   g.huntY = g.y;
-  popup(g, g.stars === 1 ? "Wanted" : `${g.stars} stars`, "bad");
+  popup(g, g.stars === 1 ? "Sasa, they saw you" : `${g.stars} stars`, "bad");
 }
 
 function losBlocked(x0: number, y0: number, x1: number, y1: number) {
@@ -595,7 +629,7 @@ function stepCops(g: Game, dt: number) {
       g.stars -= 1;
       g.escape = 0;
       g.shook += 1;
-      popup(g, g.stars <= 0 ? "Lost them" : "Star dropped", "good");
+      popup(g, g.stars <= 0 ? "Raha. They lost you" : "Star dropped", "good");
       g.events.push("coin");
     }
   }
@@ -666,6 +700,13 @@ export type Hud = {
   seen: boolean;
   ending: Ending;
   shook: number;
+  style: number;
+  boost: number;
+  drifting: boolean;
+  toasts: { text: string; tone: "good" | "bad" }[];
+  day: number;
+  rain: number;
+  radio: string;
 };
 
 export function snapshot(g: Game): Hud {
@@ -744,6 +785,13 @@ export function snapshot(g: Game): Hud {
     seen: g.seen,
     ending: g.ending,
     shook: g.shook,
+    style: g.style,
+    boost: Math.max(0, Math.min(1, g.boostJuice / 2.2)),
+    drifting: g.driftTime > 0.08,
+    toasts: g.popups.slice(-4).map((p) => ({ text: p.text, tone: p.tone })),
+    day: g.day,
+    rain: g.rain,
+    radio: RADIO[Math.floor(g.time / 8) % RADIO.length] ?? RADIO[0]!,
   };
 }
 
@@ -823,13 +871,20 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
   if (g.potholeCd > 0) g.potholeCd -= dt;
   if (g.petrolCd > 0) g.petrolCd -= dt;
   if (g.hornFlash > 0) g.hornFlash -= dt;
+  if (g.nearCd > 0) g.nearCd -= dt;
+  if (g.styleLife > 0) g.styleLife -= dt;
+  else if (g.style > 0) {
+    g.style = Math.max(0, g.style - 1);
+    g.styleLife = 1.6;
+  }
 
   const throttle = g.stun > 0 ? 0 : a.throttle;
-  // A / left => steer > 0 => +yaw. Nose goes screen-left while facing north.
   const steer = g.stun > 0 ? 0 : a.steer;
+  const wet = g.rain > 0.35;
+  const grip = wet ? 0.72 : 1;
 
-  if (throttle > 0) g.speed += ACCEL * throttle * dt;
-  else if (throttle < 0) g.speed -= BRAKE * dt;
+  if (throttle > 0) g.speed += ACCEL * throttle * grip * dt;
+  else if (throttle < 0) g.speed -= BRAKE * grip * dt;
   else {
     const d = 160 * dt;
     if (Math.abs(g.speed) <= d) g.speed = 0;
@@ -843,16 +898,46 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
   else if (g.fuel < 16) cap *= 0.7;
   if (!on && !shoulder) cap = Math.min(cap, 240);
   else if (!on) cap = Math.min(cap, 260);
+
+  if (a.boost && g.boostJuice > 0.05 && g.fuel > 4 && g.stun <= 0) {
+    g.speed += 140 * dt;
+    g.boostJuice = Math.max(0, g.boostJuice - dt * 1.15);
+    g.fuel = Math.max(0, g.fuel - dt * 3.2);
+    cap *= 1.18;
+  } else {
+    g.boostJuice = Math.min(2.2, g.boostJuice + dt * 0.42);
+  }
+
   g.speed = clamp(g.speed, -130, cap);
 
+  const drifting = a.handbrake && Math.abs(g.speed) > 65;
   const speedFactor = clamp(Math.abs(g.speed) / 80, 0.5, 1);
   const reverse = g.speed >= 0 ? 1 : -1;
-  g.yaw += steer * TURN * speedFactor * reverse * dt;
+  const turnMul = (drifting ? 1.9 : 1) * (wet ? 1.25 : 1);
+  g.yaw += steer * TURN * speedFactor * reverse * turnMul * dt;
 
   const fx = -Math.sin(g.yaw);
   const fy = -Math.cos(g.yaw);
   g.x += fx * g.speed * dt;
   g.y += fy * g.speed * dt;
+  if (drifting) {
+    const sx = Math.cos(g.yaw);
+    const sy = -Math.sin(g.yaw);
+    const slip = steer * Math.abs(g.speed) * 0.42 * dt;
+    g.x += sx * slip;
+    g.y += sy * slip;
+    g.driftTime += dt;
+    g.styleLife = Math.max(g.styleLife, 1.4);
+  } else if (g.driftTime > 0.42) {
+    const bonus = Math.round((35 + g.driftTime * 70) * (1 + g.style * 0.15));
+    g.cash += bonus;
+    g.style = Math.min(8, g.style + 1);
+    g.styleLife = 2.4;
+    popup(g, `Drift +${bonus}`, "good");
+    g.driftTime = 0;
+  } else {
+    g.driftTime = 0;
+  }
   g.x = clamp(g.x, 30, WORLD_W - 30);
   g.y = clamp(g.y, 30, WORLD_H - 30);
 
@@ -944,7 +1029,7 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
         g.cool[i] = 10;
         g.pulse = 0.45;
         g.events.push("coin");
-        popup(g, "Hopped on", "good");
+        popup(g, "Ingia. Let's go", "good");
         break;
       }
     }
@@ -957,7 +1042,7 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
       const expected = dist / 210;
       if (g.carried.elapsed < expected) pay *= 1.12;
       if (g.carried.clean) pay *= 1.08;
-      const mult = Math.min(3, 1 + g.streak * 0.25);
+      const mult = Math.min(3.4, 1 + g.streak * 0.22 + g.style * 0.08);
       pay = Math.round(pay * mult);
       g.cash += pay;
       g.fares += 1;
@@ -966,7 +1051,7 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
       if (g.streak > g.bestStreak) g.bestStreak = g.streak;
       g.pulse = 0.6;
       g.events.push("coin");
-      popup(g, `+KSh ${pay.toLocaleString("en-KE")}`, "good");
+      popup(g, `Asante · +KSh ${pay.toLocaleString("en-KE")}`, "good");
       g.carried = null;
       openPickups(g, 4);
     }
@@ -1013,6 +1098,11 @@ function stepPlayer(g: Game, dt: number, a: Actions) {
 
 export function stepGame(g: Game, dt: number, a: Actions) {
   g.time += dt;
+  g.day = (g.day + dt / 240) % 1;
+  if (g.phase === "play") {
+    const targetRain = Math.sin(g.time * 0.07) > 0.55 ? 0.85 : 0;
+    g.rain += (targetRain - g.rain) * Math.min(1, dt * 0.35);
+  }
   g.shake = Math.max(0, g.shake - dt * 26);
   g.pulse = Math.max(0, g.pulse - dt);
   for (const p of g.popups) p.life -= dt;
