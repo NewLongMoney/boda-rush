@@ -4,6 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Game, Kind } from "@/game/sim";
 import { vehiclePos } from "@/game/sim";
 import {
@@ -79,6 +80,40 @@ function wz(y: number) {
   return y * S;
 }
 
+function vehicleGeo(kind: Kind) {
+  const parts: THREE.BufferGeometry[] = [];
+  if (kind === "matatu") {
+    const body = new THREE.BoxGeometry(2.2, 2.1, 6.2);
+    body.translate(0, 1.2, 0);
+    const roof = new THREE.BoxGeometry(2.4, 0.12, 6.4);
+    roof.translate(0, 2.3, 0);
+    const cab = new THREE.BoxGeometry(2.05, 0.7, 1.4);
+    cab.translate(0, 1.55, -2.2);
+    parts.push(body, roof, cab);
+  } else if (kind === "truck") {
+    const bed = new THREE.BoxGeometry(2.3, 1.4, 5.2);
+    bed.translate(0, 1.1, 0.6);
+    const cab = new THREE.BoxGeometry(2.2, 1.8, 2.2);
+    cab.translate(0, 1.5, -2.4);
+    parts.push(bed, cab);
+  } else if (kind === "boda") {
+    const frame = new THREE.BoxGeometry(0.35, 0.22, 1.2);
+    frame.translate(0, 0.55, 0);
+    const seat = new THREE.BoxGeometry(0.28, 0.1, 0.4);
+    seat.translate(0, 0.7, 0.15);
+    parts.push(frame, seat);
+  } else {
+    const body = new THREE.BoxGeometry(1.7, 0.7, 3.6);
+    body.translate(0, 0.7, 0);
+    const cabin = new THREE.BoxGeometry(1.55, 0.55, 1.6);
+    cabin.translate(0, 1.25, -0.2);
+    parts.push(body, cabin);
+  }
+  const geo = mergeGeometries(parts, false);
+  parts.forEach((p) => p.dispose());
+  return geo ?? new THREE.BoxGeometry(1, 1, 1);
+}
+
 function unitBox() {
   return new THREE.BoxGeometry(1, 1, 1);
 }
@@ -111,13 +146,15 @@ function matatuTexture() {
   g.fillStyle = "#f3ead7";
   g.fillRect(0, 0, 64, 32);
   g.fillStyle = "#e8a317";
-  g.fillRect(0, 0, 64, 7);
+  g.fillRect(0, 0, 64, 6);
   g.fillStyle = "#c4553a";
-  g.fillRect(0, 7, 64, 4);
+  g.fillRect(0, 6, 64, 3);
   g.fillStyle = "#1f7a4d";
-  g.fillRect(0, 26, 64, 6);
+  g.fillRect(0, 24, 64, 8);
   g.fillStyle = "#14110e";
-  g.fillRect(8, 14, 16, 8);
+  g.fillRect(6, 12, 14, 7);
+  g.fillRect(26, 12, 14, 7);
+  g.fillRect(46, 12, 12, 7);
   g.fillRect(40, 14, 16, 8);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -271,8 +308,8 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   const treeMat = trackM(new THREE.MeshLambertMaterial({ color: 0x2c4a34 }));
   const acaciaMat = trackM(new THREE.MeshLambertMaterial({ color: 0x6b7a3a }));
   const trunkMat = trackM(new THREE.MeshLambertMaterial({ color: 0x4a3828 }));
-  const cones = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 1, 6)), treeMat, Math.max(1, TREES.length));
-  const acacias = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 1, 6)), acaciaMat, Math.max(1, TREES.length));
+  const cones = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 1, 7)), treeMat, Math.max(1, TREES.length));
+  const acacias = new THREE.InstancedMesh(track(new THREE.ConeGeometry(1, 0.45, 8)), acaciaMat, Math.max(1, TREES.length));
   const trunks = new THREE.InstancedMesh(track(unitBox()), trunkMat, Math.max(1, TREES.length));
   cones.castShadow = true;
   acacias.castShadow = true;
@@ -328,10 +365,10 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   }
 
   const sizes: Record<Kind, [number, number, number]> = {
-    matatu: [2.4, 2.3, 6.4],
-    car: [1.8, 1.4, 4.2],
-    truck: [2.5, 2.8, 8],
-    boda: [0.7, 1.3, 2.1],
+    matatu: [1, 1, 1],
+    car: [1, 1, 1],
+    truck: [1, 1, 1],
+    boda: [1, 1, 1],
   };
   const traffic: { kind: Kind; mesh: THREE.InstancedMesh; ids: number[] }[] = [];
   let trafficReady = false;
@@ -355,7 +392,7 @@ export function createView(canvas: HTMLCanvasElement): View3d {
         kind === "matatu"
           ? trackM(new THREE.MeshLambertMaterial({ color: 0xffffff, map: stripe ?? undefined }))
           : trackM(new THREE.MeshLambertMaterial({ color: 0xffffff }));
-      const mesh = new THREE.InstancedMesh(track(unitBox()), mat, Math.max(1, list.length));
+      const mesh = new THREE.InstancedMesh(track(vehicleGeo(kind)), mat, Math.max(1, list.length));
       mesh.frustumCulled = false;
       mesh.castShadow = true;
       if (list.length === 0) mesh.count = 0;
@@ -406,41 +443,49 @@ export function createView(canvas: HTMLCanvasElement): View3d {
 
   const bike = new THREE.Group();
   const bikeMat = trackM(new THREE.MeshLambertMaterial({ color: MAIZE }));
-  const deck = new THREE.Mesh(track(new THREE.BoxGeometry(0.42, 0.28, 1.35)), bikeMat);
-  deck.position.set(0, 0.62, 0.12);
-  const tank = new THREE.Mesh(track(new THREE.BoxGeometry(0.28, 0.22, 0.46)), bikeMat);
-  tank.position.set(0, 0.78, -0.18);
-  const wheelGeo = track(new THREE.CylinderGeometry(0.36, 0.36, 0.14, 12));
+  const dark = trackM(new THREE.MeshLambertMaterial({ color: 0x1a1814 }));
+  const deck = new THREE.Mesh(track(new THREE.BoxGeometry(0.32, 0.12, 1.05)), bikeMat);
+  deck.position.set(0, 0.58, 0.05);
+  const tank = new THREE.Mesh(track(new THREE.BoxGeometry(0.26, 0.18, 0.42)), bikeMat);
+  tank.position.set(0, 0.72, -0.22);
+  const seat = new THREE.Mesh(track(new THREE.BoxGeometry(0.22, 0.08, 0.38)), dark);
+  seat.position.set(0, 0.68, 0.18);
+  const exhaust = new THREE.Mesh(track(new THREE.CylinderGeometry(0.04, 0.04, 0.7, 6)), dark);
+  exhaust.rotation.z = Math.PI / 2;
+  exhaust.position.set(0.14, 0.42, 0.35);
+  const wheelGeo = track(new THREE.CylinderGeometry(0.34, 0.34, 0.12, 14));
   wheelGeo.rotateZ(Math.PI / 2);
   const wheelMat = trackM(new THREE.MeshLambertMaterial({ color: 0x1a1814 }));
   const fork = new THREE.Group();
-  fork.position.set(0, 0.55, -0.78);
+  fork.position.set(0, 0.52, -0.72);
   const frontWheel = new THREE.Mesh(wheelGeo, wheelMat);
-  frontWheel.position.set(0, -0.18, 0);
-  const bars = new THREE.Mesh(track(new THREE.BoxGeometry(0.62, 0.05, 0.08)), trackM(new THREE.MeshLambertMaterial({ color: INK })));
-  bars.position.set(0, 0.42, 0.02);
-  fork.add(frontWheel, bars);
+  frontWheel.position.set(0, -0.16, 0);
+  const bars = new THREE.Mesh(track(new THREE.BoxGeometry(0.58, 0.04, 0.06)), dark);
+  bars.position.set(0, 0.38, 0.02);
+  const stem = new THREE.Mesh(track(new THREE.BoxGeometry(0.06, 0.32, 0.06)), dark);
+  stem.position.set(0, 0.2, 0);
+  fork.add(frontWheel, bars, stem);
   const backWheel = new THREE.Mesh(wheelGeo, wheelMat);
-  backWheel.position.set(0, 0.36, 0.72);
+  backWheel.position.set(0, 0.34, 0.62);
   const cloth = trackM(new THREE.MeshLambertMaterial({ color: 0x24352c }));
   const riderRig = new THREE.Group();
-  riderRig.position.set(0, 0.82, 0.12);
-  const torso = new THREE.Mesh(track(new THREE.BoxGeometry(0.38, 0.48, 0.26)), cloth);
-  torso.position.set(0, 0.28, 0);
+  riderRig.position.set(0, 0.78, 0.08);
+  const torso = new THREE.Mesh(track(new THREE.BoxGeometry(0.34, 0.42, 0.22)), cloth);
+  torso.position.set(0, 0.26, 0);
   const helmetMat = trackM(new THREE.MeshLambertMaterial({ color: MAIZE }));
-  const helmet = new THREE.Mesh(track(new THREE.SphereGeometry(0.18, 10, 8)), helmetMat);
-  helmet.position.set(0, 0.62, -0.02);
-  const armGeo = track(new THREE.BoxGeometry(0.1, 0.34, 0.1));
+  const helmet = new THREE.Mesh(track(new THREE.SphereGeometry(0.16, 12, 10)), helmetMat);
+  helmet.position.set(0, 0.56, -0.02);
+  const armGeo = track(new THREE.BoxGeometry(0.08, 0.3, 0.08));
   const armL = new THREE.Mesh(armGeo, cloth);
-  armL.position.set(-0.22, 0.34, -0.16);
-  armL.rotation.z = 0.5;
-  armL.rotation.x = 0.8;
+  armL.position.set(-0.2, 0.3, -0.14);
+  armL.rotation.z = 0.45;
+  armL.rotation.x = 0.75;
   const armR = new THREE.Mesh(armGeo, cloth);
-  armR.position.set(0.22, 0.34, -0.16);
-  armR.rotation.z = -0.5;
-  armR.rotation.x = 0.8;
+  armR.position.set(0.2, 0.3, -0.14);
+  armR.rotation.z = -0.45;
+  armR.rotation.x = 0.75;
   riderRig.add(torso, helmet, armL, armR);
-  bike.add(deck, tank, fork, backWheel, riderRig);
+  bike.add(deck, tank, seat, exhaust, fork, backWheel, riderRig);
   bike.rotation.order = "YXZ";
   bike.scale.setScalar(1.45);
   bike.traverse((o) => {
@@ -527,10 +572,10 @@ export function createView(canvas: HTMLCanvasElement): View3d {
   let rideTime = 0;
   let calm = false;
 
-  function placeVehicle(mesh: THREE.InstancedMesh, index: number, x: number, z: number, yaw: number, size: [number, number, number]) {
-    dummy.position.set(x, size[1] / 2 + (calm ? 0 : Math.abs(Math.sin(rideTime * 10 + index)) * 0.05), z);
+  function placeVehicle(mesh: THREE.InstancedMesh, index: number, x: number, z: number, yaw: number) {
+    dummy.position.set(x, calm ? 0 : Math.abs(Math.sin(rideTime * 10 + index)) * 0.04, z);
     dummy.rotation.set(0, yaw, 0);
-    dummy.scale.set(size[0], size[1], size[2]);
+    dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     mesh.setMatrixAt(index, dummy.matrix);
   }
@@ -575,22 +620,22 @@ export function createView(canvas: HTMLCanvasElement): View3d {
       blob.position.set(wx(g.x), 0.04, wz(g.y));
 
       for (const bucket of traffic) {
-        const size = sizes[bucket.kind];
+        const rear = bucket.kind === "matatu" ? 3.1 : bucket.kind === "truck" ? 3.2 : bucket.kind === "boda" ? 0.6 : 1.8;
+        const halfW = bucket.kind === "matatu" ? 0.7 : bucket.kind === "truck" ? 0.75 : 0.5;
         bucket.ids.forEach((id, n) => {
           const v = g.vehicles[id];
           if (!v) return;
           const p = vehiclePos(v);
           const yaw = laneYaw(p.lane.axis, p.lane.dir);
-          placeVehicle(bucket.mesh, n, wx(p.x), wz(p.y), yaw, size);
+          placeVehicle(bucket.mesh, n, wx(p.x), wz(p.y), yaw);
           if (tails) {
             const sn = Math.sin(yaw);
             const cs = Math.cos(yaw);
             for (let side = 0; side < 2; side++) {
-              const lx = (side === 0 ? -1 : 1) * size[0] * 0.32;
-              const lz = size[2] / 2 + 0.03;
-              dummy.position.set(wx(p.x) + lx * cs + lz * sn, size[1] * 0.45, wz(p.y) - lx * sn + lz * cs);
+              const lx = (side === 0 ? -1 : 1) * halfW;
+              dummy.position.set(wx(p.x) + lx * cs + rear * sn, 0.55, wz(p.y) - lx * sn + rear * cs);
               dummy.rotation.set(0, yaw, 0);
-              dummy.scale.set(0.34, 0.22, 0.12);
+              dummy.scale.set(0.28, 0.18, 0.1);
               dummy.updateMatrix();
               tails.setMatrixAt(id * 2 + side, dummy.matrix);
             }
